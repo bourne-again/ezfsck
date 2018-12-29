@@ -1,0 +1,114 @@
+#!/bin/sh
+
+PATH=/sbin:/usr/sbin:/usr/local/sbin:/bin:/usr/bin:/usr/local/bin
+SYS=`uname`
+
+[ `id -u` -eq 0 ] || { echo "Only for root !" 1>&2; exit 1; }
+[ "$SYS" = "FreeBSD" ] || { echo "Only for FreeBSD !" 1>&2; exit 1; }
+
+HDPREFIX="ada"
+
+for cmd in fsck_ufs fsck.ext2 fsck.ext3 fsck.ext4; do
+	type $cmd > /dev/null || { echo "Missing command: $cmd" 1>&2; exit 1; }
+done
+
+echo "Portable fsck wrapper for ufs/ext2/ext3/ext4"
+echo "Press Enter to continue. Else, hit Ctrl+C to abort"
+read dummy
+
+echo "I shall be carrying out the following operations :"
+echo
+
+interact=0
+
+f_op()
+{
+	{
+		while read nextline; do
+			nextline=`echo "$nextline" | sed 's|\#.*||'`
+			[ -z "$nextline" ] && continue
+
+			part=`echo $nextline | awk '{print $1}'`
+			partfs=`echo $nextline | awk '{print $3}'`
+
+			cmd=""
+
+			for fs in ufs ext2 ext3 ext4; do
+				if [ $partfs = $fs -o $partfs = ${fs}fs ]; then
+					[ $fs = ufs ] && cmd=fsck_ufs || cmd=fsck.${fs}
+
+					op="$cmd -fy $part"
+					[ -n "$1" ] && op="$1 $op"
+
+					if echo $part | grep -q "/dev/$HDPREFIX"; then
+						if [ -z "$1" ]; then
+							if [ $interact -eq 1 ]; then
+								clear
+								echo "Invoking: $op"
+								echo
+								echo "Press Enter to continue"
+								read enter < /dev/stderr
+							else
+								echo && echo "Invoking: $op"
+							fi
+						fi
+
+						$op || $op
+
+						[ $? -eq 0 ] || \
+						{ echo "op failed for $part ($fs)" 1>&2; exit 1; }
+
+						if [ -z "$1" ]; then
+							if [ $interact -eq 1 ]; then
+								echo "Press Enter to continue"
+								read enter < /dev/stderr
+							fi
+						fi
+					fi
+
+					break
+				fi
+			done
+		done
+	} < /etc/fstab
+}
+
+f_op echo
+
+valid=false
+
+while [ $valid = false ]; do
+	echo
+
+	cat <<- EOF
+	If you wish to abort, press Ctrl+C
+
+	To commence operations, give me either a y[es] or Y[ES]
+	(y : you get a chance to initiate and review each step)
+	(Y : non-interactive)
+
+	Your choice ?  (y/Y):
+	EOF
+
+	read answer
+	echo
+
+	case $answer in
+		y|yes)
+			valid=true
+			interact=1
+		;;
+	
+		Y|YES)
+			valid=true
+			interact=0
+		;;
+	
+		*)
+			echo "I could not make any sense of that  : - (" 1>&2
+		;;
+	esac
+done
+
+f_op
+exit $?
