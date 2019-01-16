@@ -1,0 +1,199 @@
+#!/bin/sh
+
+PATH=/sbin:/usr/sbin:/usr/local/sbin:/bin:/usr/bin:/usr/local/bin
+SYS=`uname`
+
+[ `id -u` -eq 0 ] || { echo "Only for root/toor !" 1>&2; exit 255; }
+[ "$SYS" = "FreeBSD" ] || { echo "Only for FreeBSD !" 1>&2; exit 255; }
+
+# The disk-types are represented via a bit-field, the rightmost
+# bit (offset 0 from RHS <=> value 1) of which being reserved.
+
+UNITY=1
+
+HD_PREFIX="ada"
+HD_BIT=1    # <=> value 2
+HD_TYPE=$(( UNITY<<HD_BIT ))
+
+PCIE_PREFIX="nvd"
+PCIE_BIT=2  # <=> value 4
+PCIE_TYPE=$(( UNITY<<PCIE_BIT ))
+
+USB_PREFIX="da"
+USB_BIT=3   # <=> value 8
+USB_TYPE=$(( UNITY<<USB_BIT ))
+
+interact=0
+optypes=$HD_TYPE
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--nvme)
+            shift
+            optypes=$(( optypes | PCIE_TYPE ))
+        ;;
+
+   		--removable)
+            shift
+            optypes=$(( optypes | USB_TYPE ))
+        ;;
+
+   		--all)
+            shift
+            optypes=$(( HD_TYPE | PCIE_TYPE | USB_TYPE ))
+        ;;
+
+        *)
+			echo "Invalid argument: $1"
+			exit 255
+		;;
+	esac
+done
+
+for cmd in fsck_ufs fsck.ext2 fsck.ext3 fsck.ext4; do
+	type $cmd > /dev/null || { echo "Missing command: $cmd" 1>&2; exit 255; }
+done
+
+echo "Portable fsck wrapper for ufs/ext2fs/ext3fs/ext4fs"
+echo "Press Enter to continue. Else, hit Ctrl+C to abort"
+read dummy
+
+echo "I shall be carrying out the following operations :"
+echo
+
+f_optype()
+{
+    if [ -e "$1" ]; then
+        if [ $(( optypes & HD_TYPE)) -ne 0 ]; then
+            if echo "$1" | grep -q "/dev/${HD_PREFIX}"; then
+                return 0
+            fi
+        fi
+
+        if [ $(( optypes & PCIE_TYPE)) -ne 0 ]; then
+            if echo "$1" | grep -q "/dev/${PCIE_PREFIX}"; then
+                return 0
+            fi
+        fi
+
+        if [ $(( optypes & USB_TYPE)) -ne 0 ]; then
+            if echo "$1" | grep -q "/dev/${USB_PREFIX}"; then
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+f_op()
+{
+	{
+		while read nextline; do
+			nextline=`echo "$nextline" | sed 's|\#.*||'`
+			[ -z "$nextline" ] && continue
+
+			part=`echo $nextline | awk '{print $1}'`
+			partfs=`echo $nextline | awk '{print $3}'`
+
+			cmd=""
+
+			for fs in ufs ext2 ext3 ext4; do
+				if [ $partfs = $fs -o $partfs = ${fs}fs ]; then
+					[ $fs = ufs ] && cmd=fsck_ufs || cmd=fsck.${fs}
+
+					op="$cmd -fy $part"
+					[ -n "$1" ] && op="$1 $op"
+
+					if f_optype $part; then
+						if [ -z "$1" ]; then
+							if [ $interact -eq 1 ]; then
+								clear
+								echo "Invoking: $op"
+								echo
+								echo "Press Enter to continue"
+								echo "To skip this partition, type 'skip' (without quotes) and then press Enter"
+								read enter < /dev/stderr
+								[ "$enter" = "skip" ] && break
+							else
+								echo && echo "Invoking: $op"
+							fi
+						fi
+
+						$op || $op
+                        r=$?
+
+						[ $r -eq 0 ] || \
+						{ echo "op failed for $part ($fs)" 1>&2; exit $r; }
+
+						if [ -z "$1" ]; then
+							if [ $interact -eq 1 ]; then
+								echo && echo "Press Enter to continue"
+								read enter < /dev/stderr
+							fi
+						fi
+					fi
+
+					break
+				fi
+			done
+		done
+	} < /etc/fstab
+}
+
+f_op echo
+
+valid=false
+
+while [ $valid = false ]; do
+	echo
+
+	cat <<- EOF
+	If you wish to abort, press Ctrl+C
+
+	To commence operations, give me either a y[es] or Y[ES]
+	(y : you get a chance to initiate and review each step)
+	(Y : non-interactive)
+
+	Your choice ?  (y/Y):
+	EOF
+
+	read answer
+	echo
+
+	case $answer in
+		y|yes)
+			valid=true
+			interact=1
+		;;
+
+		Y|YES)
+			valid=true
+			interact=0
+		;;
+
+		*)
+			echo "I could not make any sense of that  : - (" 1>&2
+		;;
+	esac
+done
+
+clear
+cat <<- EOF
+
+Do not attach/detach devices till operations are in progress !
+<This cautionary message will display on screen for 5 seconds>
+
+EOF
+
+n=0
+
+while [ $n -lt 5 ]; do
+    echo -e ".\c"
+    sleep 1
+    n=`expr $n + 1`
+done
+clear
+
+f_op
+exit $?

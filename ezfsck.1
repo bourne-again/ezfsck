@@ -1,0 +1,62 @@
+.TH man 1 "17 January, 2019" "1.0" "ezfsck man page"
+
+.SH NAME
+ezfsck \- a script that performs fsck on all disk partitions of
+types UFS/Ext2/Ext3/Ext4 listed in /etc/fstab
+
+.SH SYNOPSIS
+ezfsck addresses the minor task of iterating over disk partitions
+for fsck operations after a bad shutdown. The script carries out fsck
+on all partitions of type ufs/ext2fs/ext3fs/ext4fs listed in /etc/fstab.
+By default, only hard-disk partitions of type /dev/ada* are operated
+on, but you can pull in other types (/dev/da* ; /dev/nvd*) as well
+via command-line options.
+
+Since ezfsck has to work portably between BSD fsck and Linux fsck, the
+only fsck arguments that are meaningful are -f and -y, which work
+exactly the same across fsck implementations. Luckily, -fy is all that
+is usually needed for a good fsck operation and is always passed in as
+hard-wired by the ezfsck implementation.
+
+.SH USAGE
+To carry out fsck on all /dev/ada* partitions listed in /etc/fstab, use:
+
+ezfsck
+
+To additionally check /dev/nvd* partitions (besides /dev/ada*), use:
+
+ezfsck --nvme
+
+To additionally check /dev/da* partitions (besides /dev/ada*), use:
+
+ezfsck --removable
+
+To fsck all partitions (/dev/ada* ; /dev/da* ; /dev/nvd*), use:
+
+ezfsck --all
+
+.SH RETURN VALUES
+255 is returned for operational failure resulting from bad user input.
+
+0 is returned if all fsck operations completed successfully.
+
+If fsck fails, the return value of the last fsck operation is returned.
+
+.SH SEE ALSO
+fsck_ffs(8)
+
+e2fsck(8)
+
+.SH BUGS/LIMITATIONS
+ezfsck carries out fsck twice, the second op forced if the first op
+does not report 0 (and the second op skipped if the first op succeeds
+with the exit code 0).
+
+Unlike BSD fsck (which always returns 0 on success), Linux fsck
+programs (fsck.ext2; fsck.ext3; fsck.ext4) return 1 or 2 on success if a
+partition had errors but was successfully corrected. This results in the
+fallacy that ezfsck carries out fsck on dirty Ext2/Ext3/Ext4 partitions
+twice even if the first op was successful and sufficient by itself.
+
+.SH AUTHOR
+Manish Jain (bourne.identity@hotmail.com)
